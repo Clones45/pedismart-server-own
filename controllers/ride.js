@@ -1270,7 +1270,89 @@ export const requestEarlyStop = async (req, res) => {
       }
     }
 
-    // HANDLER FOR MAIN BOOKER / RIDER (Complete Ride)
+    // HANDLER FOR MAIN BOOKER / RIDER
+    // Check if there are other active passengers (joining passengers)
+    const otherActivePassengers = ride.passengers.filter(p =>
+      p.userId.toString() !== userId &&
+      (p.status === 'ONBOARD' || p.status === 'WAITING')
+    );
+
+    // If customer requests early stop and there are other passengers, JUST DROP THE CUSTOMER (Partial Drop)
+    if (requestedBy === "customer" && otherActivePassengers.length > 0) {
+      const customerPassengerIndex = ride.passengers.findIndex(p => p.userId.toString() === userId);
+
+      if (customerPassengerIndex !== -1) {
+        const passenger = ride.passengers[customerPassengerIndex];
+        passenger.status = "DROPPED";
+        passenger.isEarlyStop = true;
+        passenger.earlyStopReason = reason || "Customer requested early stop";
+        passenger.drop = {
+          name: earlyStopAddress,
+          address: earlyStopAddress,
+          latitude: location.latitude,
+          longitude: location.longitude
+        };
+      } else {
+        console.log(`⚠️ Main Customer ${userId} early stopped but not found in passengers array.`);
+      }
+
+      // We also update the ride.earlyStop to indicate the booker ended their portion, 
+      // but we DO NOT mark the ride as COMPLETED yet.
+      ride.earlyStop = {
+        completedEarly: true, // Booker finished early
+        location: {
+          latitude: location.latitude,
+          longitude: location.longitude,
+        },
+        address: earlyStopAddress,
+        requestedBy: requestedBy,
+        requestedAt: new Date(),
+        reason: reason || null,
+      };
+
+      await ride.save();
+      console.log(`👤 Main Customer ${userId} requested EARLY STOP. Ride continues for ${otherActivePassengers.length} others.`);
+
+      // Notify socket
+      if (req.io) {
+        req.io.to(`ride_${rideId}`).emit("passengerUpdate", ride);
+        req.io.to(`ride_${rideId}`).emit("rideUpdate", ride); // Update ride data too
+
+        const passengerSocket = [...req.io.sockets.sockets.values()].find(
+          socket => socket.user?.id === userId
+        );
+        if (passengerSocket) {
+          passengerSocket.emit("yourStatusUpdated", {
+            status: "DROPPED",
+            ride: ride,
+            earlyStop: true,
+            message: `You have dropped off early at ${earlyStopAddress}`
+          });
+        }
+        // Notify Rider
+        if (ride.rider) {
+          const riderSocket = [...req.io.sockets.sockets.values()].find(
+            socket => socket.user?.id === ride.rider._id.toString()
+          );
+          if (riderSocket) {
+            riderSocket.emit("passengerEarlyStop", {
+              rideId,
+              passengerId: userId,
+              message: "Main Customer requested early stop",
+              location: location
+            });
+          }
+        }
+      }
+
+      return res.status(StatusCodes.OK).json({
+        message: "You have been dropped off early",
+        ride,
+        earlyStop: true
+      });
+    }
+
+    // IF NO OTHER PASSENGERS (or requested by Rider), COMPLETE THE RIDE
     // ... Existing logic for full ride completion ...
 
     // Update ride with early stop information
