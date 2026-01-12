@@ -1183,15 +1183,18 @@ export const requestEarlyStop = async (req, res) => {
       throw new BadRequestError("Early stop can only be requested during an active ride (ARRIVED status)");
     }
 
-    // Check if user is authorized (must be customer or rider)
+    // Check if user is authorized (must be customer or rider OR a passenger)
     const isCustomer = ride.customer._id.toString() === userId;
     const isRider = ride.rider && ride.rider._id.toString() === userId;
+    // Check if user is a passenger
+    const passengerIndex = ride.passengers ? ride.passengers.findIndex(p => p.userId.toString() === userId) : -1;
+    const isPassenger = passengerIndex !== -1;
 
-    if (!isCustomer && !isRider) {
+    if (!isCustomer && !isRider && !isPassenger) {
       throw new BadRequestError("You are not authorized to request early stop for this ride");
     }
 
-    const requestedBy = isCustomer ? "customer" : "rider";
+    const requestedBy = isCustomer ? "customer" : (isRider ? "rider" : "passenger");
 
     // Get address for the early stop location using reverse geocoding
     let earlyStopAddress = `${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}`;
@@ -1201,6 +1204,72 @@ export const requestEarlyStop = async (req, res) => {
     } catch (geocodeError) {
       console.log(`⚠️ Could not geocode early stop location: ${geocodeError.message}`);
     }
+
+    // HANDLER FOR JOINING PASSENGERS (Partial Drop-off)
+    // If it's a passenger requesting early stop (and NOT the main booker/customer), just drop them off
+    if (requestedBy === "passenger") {
+      const passenger = ride.passengers[passengerIndex];
+
+      // If this passenger happens to be the isOriginalBooker (should be covered by isCustomer, but just in case)
+      if (passenger.isOriginalBooker) {
+        // Fall through to main ride completion logic
+      } else {
+        // Just drop this passenger
+        passenger.status = "DROPPED";
+        passenger.drop = { // Record where they actually dropped
+          name: earlyStopAddress,
+          address: earlyStopAddress,
+          latitude: location.latitude,
+          longitude: location.longitude
+        };
+
+        await ride.save();
+
+        console.log(`👤 Passenger ${userId} requested EARLY STOP. Status updated to DROPPED.`);
+
+        // Notify socket
+        if (req.io) {
+          req.io.to(`ride_${rideId}`).emit("passengerUpdate", ride);
+
+          // Notify passenger specifically
+          const passengerSocket = [...req.io.sockets.sockets.values()].find(
+            socket => socket.user?.id === userId
+          );
+          if (passengerSocket) {
+            passengerSocket.emit("yourStatusUpdated", {
+              status: "DROPPED",
+              ride: ride,
+              earlyStop: true,
+              message: `You have dropped off early at ${earlyStopAddress}`
+            });
+          }
+
+          // Notify Rider
+          if (ride.rider) {
+            const riderSocket = [...req.io.sockets.sockets.values()].find(
+              socket => socket.user?.id === ride.rider._id.toString()
+            );
+            if (riderSocket) {
+              riderSocket.emit("passengerEarlyStop", {
+                rideId,
+                passengerId: userId,
+                message: "Passenger requested early stop",
+                location: location
+              });
+            }
+          }
+        }
+
+        return res.status(StatusCodes.OK).json({
+          message: "You have been dropped off early",
+          ride,
+          earlyStop: true
+        });
+      }
+    }
+
+    // HANDLER FOR MAIN BOOKER / RIDER (Complete Ride)
+    // ... Existing logic for full ride completion ...
 
     // Update ride with early stop information
     ride.earlyStop = {
@@ -1257,7 +1326,6 @@ export const requestEarlyStop = async (req, res) => {
     console.log(`   Requested by: ${requestedBy}`);
     console.log(`   Location: ${earlyStopAddress}`);
     console.log(`   Distance traveled: ${actualDistanceTraveled.toFixed(2)} km`);
-    console.log(`   Original distance: ${ride.distance.toFixed(2)} km`);
 
     // Create dropoff checkpoint at early stop location
     try {
