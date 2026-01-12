@@ -1216,6 +1216,8 @@ export const requestEarlyStop = async (req, res) => {
       } else {
         // Just drop this passenger
         passenger.status = "DROPPED";
+        passenger.isEarlyStop = true;
+        passenger.earlyStopReason = reason || "Passenger requested early stop";
         passenger.drop = { // Record where they actually dropped
           name: earlyStopAddress,
           address: earlyStopAddress,

@@ -111,6 +111,14 @@ const rideSchema = new Schema(
         latitude: { type: Number, default: null },
         longitude: { type: Number, default: null },
       },
+      isEarlyStop: {
+        type: Boolean,
+        default: false,
+      },
+      earlyStopReason: {
+        type: String,
+        default: null,
+      },
       pickup: {
         address: { type: String, default: null },
         name: { type: String, default: null },
