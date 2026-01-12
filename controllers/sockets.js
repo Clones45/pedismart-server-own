@@ -1182,7 +1182,7 @@ const handleSocketConnection = (io) => {
     // Approve passenger join request (rider only)
     socket.on("approveJoinRequest", async (data) => {
       try {
-        const { rideId, passengerId, drop } = data;
+        const { rideId, passengerId, drop, pickup } = data;
         const riderId = user.id;
 
         console.log(`✅ Socket: Rider ${riderId} approving passenger ${passengerId} for ride ${rideId}`);
@@ -1236,6 +1236,7 @@ const handleSocketConnection = (io) => {
           status: "WAITING",
           joinedAt: new Date(),
           drop: drop || ride.drop, // Store the specific drop-off location
+          pickup: pickup || null, // Store the specific pickup location
           otp: Math.floor(1000 + Math.random() * 9000).toString(), // Generate 4-digit OTP
         });
         ride.currentPassengerCount = ride.passengers.length;
