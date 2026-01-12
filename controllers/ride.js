@@ -1178,9 +1178,9 @@ export const requestEarlyStop = async (req, res) => {
       throw new NotFoundError("Ride not found");
     }
 
-    // Only allow early stop during ARRIVED status (ride in progress)
-    if (ride.status !== "ARRIVED") {
-      throw new BadRequestError("Early stop can only be requested during an active ride (ARRIVED status)");
+    // Only allow early stop during active ride states
+    if (ride.status !== "ARRIVED" && ride.status !== "START") {
+      throw new BadRequestError("Early stop can only be requested during an active ride");
     }
 
     // Check if user is authorized (must be customer or rider OR a passenger)
