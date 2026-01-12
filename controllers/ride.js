@@ -836,6 +836,7 @@ export const approvePassengerJoinRequest = async (req, res) => {
       isOriginalBooker: false,
       joinedAt: new Date(),
       drop: drop || ride.drop, // Store the specific drop-off location
+      pickup: req.body.pickup || null, // Store the specific pickup location
     });
 
     ride.currentPassengerCount = ride.passengers.length;

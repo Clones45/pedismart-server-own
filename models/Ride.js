@@ -111,6 +111,12 @@ const rideSchema = new Schema(
         latitude: { type: Number, default: null },
         longitude: { type: Number, default: null },
       },
+      pickup: {
+        address: { type: String, default: null },
+        name: { type: String, default: null },
+        latitude: { type: Number, default: null },
+        longitude: { type: Number, default: null },
+      },
       otp: {
         type: String,
         default: null,
