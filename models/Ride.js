@@ -16,11 +16,13 @@ const rideSchema = new Schema(
     },
     pickup: {
       address: { type: String, required: true },
+      name: { type: String, default: null },
       latitude: { type: Number, required: true },
       longitude: { type: Number, required: true },
     },
     drop: {
       address: { type: String, required: true },
+      name: { type: String, default: null },
       latitude: { type: Number, required: true },
       longitude: { type: Number, required: true },
     },
@@ -102,7 +104,17 @@ const rideSchema = new Schema(
       isOriginalBooker: {
         type: Boolean,
         default: false,
-      }
+      },
+      drop: {
+        address: { type: String, default: null },
+        name: { type: String, default: null },
+        latitude: { type: Number, default: null },
+        longitude: { type: Number, default: null },
+      },
+      otp: {
+        type: String,
+        default: null,
+      },
     }],
     maxPassengers: {
       type: Number,

@@ -42,7 +42,7 @@ export const acceptRide = async (req, res) => {
     // Get rider details to check vehicle type
     const User = (await import('../models/User.js')).default;
     const rider = await User.findById(riderId);
-    
+
     if (!rider) {
       throw new NotFoundError("Rider not found");
     }
@@ -66,19 +66,19 @@ export const acceptRide = async (req, res) => {
         ride.pickup.latitude,
         ride.pickup.longitude
       );
-      
+
       if (distance > MAX_DISTANCE_KM) {
         console.log(`❌ Distance check failed: Rider is ${distance.toFixed(2)}km away (max: ${MAX_DISTANCE_KM}km)`);
         throw new BadRequestError(`This ride is too far away (${distance.toFixed(1)}km). Maximum distance is ${MAX_DISTANCE_KM}km.`);
       }
-      
+
       console.log(`✅ Distance check passed: Rider is ${distance.toFixed(2)}km away (within ${MAX_DISTANCE_KM}km limit)`);
     }
     // ============================================
 
     ride.rider = riderId;
     ride.status = "START";
-    
+
     // ============================================
     // TRIP LOG: Record accept time and start time
     // ============================================
@@ -89,7 +89,7 @@ export const acceptRide = async (req, res) => {
     ride.tripLogs.startTime = new Date();
     console.log(`📊 Trip Log: Ride ${rideId} accepted at ${ride.tripLogs.acceptTime}`);
     // ============================================
-    
+
     // ============================================
     // RIDER LOCATION: Store rider's location for distance calculation
     // ============================================
@@ -104,7 +104,7 @@ export const acceptRide = async (req, res) => {
       console.log(`📍 Rider location stored: ${riderLocationFromBody.latitude}, ${riderLocationFromBody.longitude}`);
     }
     // ============================================
-    
+
     await ride.save();
 
     // ============================================
@@ -116,7 +116,7 @@ export const acceptRide = async (req, res) => {
         latitude: ride.pickup.latitude,
         longitude: ride.pickup.longitude,
       };
-      
+
       await createAcceptedCheckpoint(
         rideId,
         riderId,
@@ -138,11 +138,11 @@ export const acceptRide = async (req, res) => {
       console.log(`Broadcasting ride acceptance for ride ${rideId}`);
       console.log(`Ride status: ${ride.status}, OTP: ${ride.otp}`);
       console.log(`Customer ID: ${ride.customer}, Rider ID: ${riderId}`);
-      
+
       // Send updated ride data to the ride room
       req.io.to(`ride_${rideId}`).emit("rideUpdate", ride);
       req.io.to(`ride_${rideId}`).emit("rideAccepted", ride);
-      
+
       // Also try to find and directly notify the customer
       const customerSocket = [...req.io.sockets.sockets.values()].find(
         socket => socket.user?.id === ride.customer.toString()
@@ -155,7 +155,7 @@ export const acceptRide = async (req, res) => {
       } else {
         console.log(`Customer socket not found for customer ${ride.customer}`);
       }
-      
+
       // Send ride data with OTP to the rider who accepted
       const riderSocket = [...req.io.sockets.sockets.values()].find(
         socket => socket.user?.id === riderId
@@ -166,10 +166,10 @@ export const acceptRide = async (req, res) => {
       } else {
         console.log(`Rider socket not found for rider ${riderId}`);
       }
-      
+
       // Broadcast to all on-duty riders that this ride is no longer available
       broadcastRideAccepted(req.io, rideId);
-      
+
       console.log(`Ride ${rideId} acceptance broadcast completed`);
     }
 
@@ -201,32 +201,32 @@ export const updateRideStatus = async (req, res) => {
     if (!["START", "ARRIVED", "COMPLETED"].includes(status)) {
       throw new BadRequestError("Invalid ride status");
     }
-    
+
     // CRITICAL: Never allow changing status of a COMPLETED ride
     if (ride.status === "COMPLETED") {
       console.log(`🔒 Protected: Ride ${rideId} is already COMPLETED - status change to ${status} rejected`);
-      
+
       // Return the ride without changing it
       return res.status(StatusCodes.OK).json({
         message: `Ride is already completed and cannot be changed`,
         ride,
       });
     }
-    
+
     // Log the status change with detailed information
     console.log(`📝 Ride ${rideId} status change: ${ride.status} → ${status}`);
     console.log(`📍 Ride details: Customer=${ride.customer._id}, Rider=${ride.rider?._id || 'None'}, OTP=${ride.otp}`);
-    
+
     // Update the status
     ride.status = status;
-    
+
     // ============================================
     // TRIP LOG: Record timestamps for each status change
     // ============================================
     if (!ride.tripLogs) {
       ride.tripLogs = {};
     }
-    
+
     if (status === "ARRIVED") {
       // Driver arrived at pickup location - record pickup time
       ride.tripLogs.pickupTime = new Date();
@@ -238,7 +238,7 @@ export const updateRideStatus = async (req, res) => {
       // Store final distance
       ride.finalDistance = ride.distance;
       console.log(`📊 Trip Log: Ride ${rideId} completed at ${ride.tripLogs.endTime}, final distance: ${ride.finalDistance}km`);
-      
+
       // ============================================
       // ROUTE LOGS: Calculate distances on completion
       // ============================================
@@ -253,7 +253,7 @@ export const updateRideStatus = async (req, res) => {
             hasSignificantDeviation: false,
           };
         }
-        
+
         // 1. Actual Distance: Direct path from pickup to dropoff
         const actualDistance = calculateDistance(
           ride.pickup.latitude,
@@ -262,23 +262,23 @@ export const updateRideStatus = async (req, res) => {
           ride.drop.longitude
         );
         ride.routeLogs.actualDistance = actualDistance;
-        
+
         // 2. Route Distance: Calculate from GPS checkpoints (driver's actual path)
         const routeDistance = await CheckpointSnapshot.calculateTotalDistance(rideId);
         ride.routeLogs.routeDistance = routeDistance;
-        
+
         // 3. Calculate deviation percentage
         const estimatedDistance = ride.routeLogs.estimatedDistance || ride.distance;
         if (estimatedDistance > 0 && routeDistance > 0) {
           const deviation = ((routeDistance - estimatedDistance) / estimatedDistance) * 100;
           ride.routeLogs.deviationPercentage = Math.round(deviation * 100) / 100; // Round to 2 decimal places
           ride.routeLogs.hasSignificantDeviation = deviation > ROUTE_DEVIATION_THRESHOLD;
-          
+
           if (ride.routeLogs.hasSignificantDeviation) {
             console.log(`⚠️ Route Deviation Alert: Ride ${rideId} has ${deviation.toFixed(1)}% deviation (threshold: ${ROUTE_DEVIATION_THRESHOLD}%)`);
           }
         }
-        
+
         console.log(`🛣️ Route Logs: Ride ${rideId} - Estimated: ${estimatedDistance.toFixed(2)}km, Actual: ${actualDistance.toFixed(2)}km, Route: ${routeDistance.toFixed(2)}km`);
       } catch (routeLogError) {
         console.error(`⚠️ Failed to calculate route logs for ride ${rideId}:`, routeLogError);
@@ -287,10 +287,11 @@ export const updateRideStatus = async (req, res) => {
       // ============================================
     }
     // ============================================
-    
+
     // ============================================
     // AUTO-UPDATE PASSENGER STATUSES
     // ============================================
+    const newlyDroppedPassengers = new Set();
     if (ride.passengers && ride.passengers.length > 0) {
       if (status === "ARRIVED") {
         // When driver arrives, all WAITING passengers become ONBOARD
@@ -313,6 +314,7 @@ export const updateRideStatus = async (req, res) => {
         ride.passengers.forEach(passenger => {
           if (passenger.status === "ONBOARD" || passenger.status === "WAITING") {
             passenger.status = "DROPPED";
+            newlyDroppedPassengers.add(passenger.userId.toString());
             updatedCount++;
           }
         });
@@ -322,9 +324,9 @@ export const updateRideStatus = async (req, res) => {
       }
     }
     // ============================================
-    
+
     await ride.save();
-    
+
     // Log confirmation of successful update
     console.log(`✅ Ride ${rideId} status successfully updated to ${status}`);
 
@@ -340,10 +342,10 @@ export const updateRideStatus = async (req, res) => {
         latitude: ride.drop.latitude,
         longitude: ride.drop.longitude,
       });
-      
+
       const riderId = ride.rider._id || ride.rider;
       const customerId = ride.customer._id || ride.customer;
-      
+
       if (status === "ARRIVED") {
         // PICKUP checkpoint - driver reached pickup location
         await createPickupCheckpoint(
@@ -375,27 +377,37 @@ export const updateRideStatus = async (req, res) => {
     if (req.io) {
       console.log(`Broadcasting ride status update: ${status} for ride ${rideId}`);
       req.io.to(`ride_${rideId}`).emit("rideUpdate", ride);
-      
+
       // Broadcast passenger status updates if any passengers were auto-updated
       if (ride.passengers && ride.passengers.length > 0 && (status === "ARRIVED" || status === "COMPLETED")) {
         req.io.to(`ride_${rideId}`).emit("passengerUpdate", ride);
         console.log(`👥 Broadcasting passenger status updates for ride ${rideId}`);
-        
+
         // Notify each passenger individually about their status change
+        // CRITICAL: If COMPLETED, only notify those who weren't already DROPPED
         ride.passengers.forEach(passenger => {
-          const passengerSocket = [...req.io.sockets.sockets.values()].find(
-            socket => socket.user?.id === passenger.userId.toString()
-          );
-          if (passengerSocket) {
-            passengerSocket.emit("yourStatusUpdated", {
-              status: passenger.status,
-              ride: ride
-            });
-            console.log(`👤 Notified passenger ${passenger.firstName} of status: ${passenger.status}`);
+          const passIdStr = passenger.userId.toString();
+
+          // Only notify if status is not DROPPED, or if it was JUST changed to DROPPED in this call
+          const shouldNotify = status !== "COMPLETED" || newlyDroppedPassengers.has(passIdStr);
+
+          if (shouldNotify) {
+            const passengerSocket = [...req.io.sockets.sockets.values()].find(
+              socket => socket.user?.id === passIdStr
+            );
+            if (passengerSocket) {
+              passengerSocket.emit("yourStatusUpdated", {
+                status: passenger.status,
+                ride: ride
+              });
+              console.log(`👤 Notified passenger ${passenger.firstName} of status: ${passenger.status}`);
+            }
+          } else {
+            console.log(`⏭️ Skipping notification for already DROPPED passenger: ${passenger.firstName}`);
           }
         });
       }
-      
+
       // Also directly notify the customer
       const customerSocket = [...req.io.sockets.sockets.values()].find(
         socket => socket.user?.id === ride.customer._id.toString()
@@ -405,21 +417,21 @@ export const updateRideStatus = async (req, res) => {
         customerSocket.emit("rideUpdate", ride);
         customerSocket.emit("rideData", ride);
       }
-      
+
       // If completed, send completion event and remove from riders' lists
       if (status === "COMPLETED") {
         req.io.to(`ride_${rideId}`).emit("rideCompleted", ride);
         if (customerSocket) {
           customerSocket.emit("rideCompleted", ride);
         }
-        
+
         // Remove from all on-duty riders' lists (in case it's still showing)
-        req.io.to("onDuty").emit("rideCompleted", { 
+        req.io.to("onDuty").emit("rideCompleted", {
           _id: rideId,
           rideId: rideId,
           ride: ride
         });
-        
+
         console.log(`🎉 Ride ${rideId} completed - removed from all riders' lists`);
       }
     }
@@ -464,7 +476,7 @@ export const cancelRide = async (req, res) => {
         message: "Ride is already completed and cannot be cancelled",
       });
     }
-    
+
     // Only allow cancellation if ride is still searching or just started
     if (!["SEARCHING_FOR_RIDER", "START", "ARRIVED"].includes(ride.status)) {
       throw new BadRequestError("Ride cannot be cancelled at this stage");
@@ -472,8 +484,8 @@ export const cancelRide = async (req, res) => {
 
     // Determine who cancelled the ride
     const cancelledBy = ride.customer._id.toString() === userId ? "customer" : "rider";
-    const cancellerName = cancelledBy === "customer" 
-      ? `${ride.customer.firstName} ${ride.customer.lastName}` 
+    const cancellerName = cancelledBy === "customer"
+      ? `${ride.customer.firstName} ${ride.customer.lastName}`
       : `${ride.rider?.firstName} ${ride.rider?.lastName}`;
 
     // If rider cancelled, add them to blacklist so they never see this ride again
@@ -485,7 +497,7 @@ export const cancelRide = async (req, res) => {
         ride.blacklistedRiders.push(userId);
         console.log(`🚫 Rider ${userId} added to blacklist for ride ${rideId} - they will not see this ride again`);
       }
-      
+
       // If ride was still searching, reset it so other riders can accept
       if (ride.status === "SEARCHING_FOR_RIDER") {
         ride.rider = null;
@@ -512,29 +524,29 @@ export const cancelRide = async (req, res) => {
         console.log(`📝 Cancellation reason: ${reason}`);
       }
     }
-    
+
     await ride.save();
 
     // Broadcast cancellation to all relevant parties
     if (req.io) {
       console.log(`📢 Broadcasting cancellation for ride ${rideId} to all connected parties`);
-      
+
       // Emit to ride room
-      req.io.to(`ride_${rideId}`).emit("rideCanceled", { 
+      req.io.to(`ride_${rideId}`).emit("rideCanceled", {
         message: "Ride has been cancelled",
         ride: ride,
         cancelledBy: cancelledBy,
         cancellerName: cancellerName
       });
-      
+
       console.log(`✅ Emitted rideCanceled to ride room: ride_${rideId}`);
-      
+
       // If passenger cancelled after driver accepted, send alert to driver
       if (cancelledBy === "customer" && ride.rider && ride.status !== "SEARCHING_FOR_RIDER") {
         const riderSocket = [...req.io.sockets.sockets.values()].find(
           socket => socket.user?.id === ride.rider._id.toString()
         );
-        
+
         if (riderSocket) {
           console.log(`🚨 Sending cancellation alert to rider ${ride.rider._id}`);
           riderSocket.emit("passengerCancelledRide", {
@@ -545,13 +557,13 @@ export const cancelRide = async (req, res) => {
           });
         }
       }
-      
+
       // If driver cancelled, send alert to passenger
       if (cancelledBy === "rider" && ride.customer) {
         const customerSocket = [...req.io.sockets.sockets.values()].find(
           socket => socket.user?.id === ride.customer._id.toString()
         );
-        
+
         if (customerSocket) {
           console.log(`🚨 Sending cancellation alert to customer ${ride.customer._id}`);
           customerSocket.emit("riderCancelledRide", {
@@ -561,14 +573,14 @@ export const cancelRide = async (req, res) => {
             ride: ride
           });
         }
-        
+
         // If rider cancelled and ride is still SEARCHING (reset for other riders),
         // only remove it from the cancelling rider's screen
         if (ride.status === "SEARCHING_FOR_RIDER") {
           const cancellingRiderSocket = [...req.io.sockets.sockets.values()].find(
             socket => socket.user?.id === userId
           );
-          
+
           if (cancellingRiderSocket) {
             console.log(`🚫 Removing ride ${rideId} from cancelling rider ${userId}'s screen only`);
             cancellingRiderSocket.emit("rideRemovedForYou", rideId);
@@ -582,7 +594,7 @@ export const cancelRide = async (req, res) => {
         console.log(`🚫 Customer cancelled ride ${rideId} - removing from ALL on-duty riders' screens`);
         req.io.to("onDuty").emit("rideOfferCanceled", rideId);
         console.log(`✅ Emitted rideOfferCanceled to onDuty room for ride ${rideId}`);
-        
+
         // Also emit rideCanceled with ride data for additional handling
         req.io.to("onDuty").emit("rideCanceled", {
           rideId: rideId,
@@ -591,7 +603,7 @@ export const cancelRide = async (req, res) => {
         });
         console.log(`✅ Emitted rideCanceled to onDuty room for ride ${rideId}`);
       }
-      
+
       console.log(`📢 Broadcasted ride ${rideId} cancellation to all relevant parties`);
     }
 
@@ -613,7 +625,7 @@ export const getMyRides = async (req, res) => {
   try {
     const query = {
       $or: [
-        { customer: userId }, 
+        { customer: userId },
         { rider: userId },
         { "passengers.userId": userId } // Include rides where user is a passenger
       ],
@@ -643,20 +655,20 @@ export const getMyRides = async (req, res) => {
 export const getSearchingRides = async (req, res) => {
   try {
     const riderId = req.user.id;
-    
+
     // Get rider's vehicle type from database (for logging purposes)
     const User = (await import('../models/User.js')).default;
     const rider = await User.findById(riderId).select('vehicleType');
     const riderVehicleType = rider?.vehicleType || "Unknown";
-    
+
     // Return ALL searching rides (client will handle visual feedback for mismatched rides)
     // Only rides with SEARCHING_FOR_RIDER status (cancelled/timeout rides have different status)
-    const allRides = await Ride.find({ 
+    const allRides = await Ride.find({
       status: "SEARCHING_FOR_RIDER"
     }).populate("customer", "firstName lastName phone");
-    
+
     console.log(`API: Found ${allRides.length} searching rides (ALL vehicle types) for rider ${riderId} (vehicle: ${riderVehicleType})`);
-    
+
     // Log vehicle type breakdown
     if (allRides.length > 0) {
       const vehicleBreakdown = allRides.reduce((acc, ride) => {
@@ -665,7 +677,7 @@ export const getSearchingRides = async (req, res) => {
       }, {});
       console.log(`API: Vehicle types: ${JSON.stringify(vehicleBreakdown)}`);
     }
-    
+
     res.status(StatusCodes.OK).json({
       message: "Searching rides retrieved successfully (ALL vehicle types)",
       count: allRides.length,
@@ -685,6 +697,8 @@ export const getSearchingRides = async (req, res) => {
 // Join an existing ride as a passenger
 export const joinRide = async (req, res) => {
   const { rideId } = req.params;
+  const { drop, pickup } = req.body; // Accept drop and pickup location
+  console.log(`🔗 joinRide payload: pickup=${JSON.stringify(pickup)}, drop=${JSON.stringify(drop)}`);
   const userId = req.user.id;
 
   if (!rideId) {
@@ -728,10 +742,10 @@ export const joinRide = async (req, res) => {
       const riderSocket = [...req.io.sockets.sockets.values()].find(
         socket => socket.user?.id === ride.rider.toString()
       );
-      
+
       if (riderSocket) {
         console.log(`📨 Sending join request to rider for ride ${rideId}`);
-        
+
         // Send join request to rider
         riderSocket.emit("passengerJoinRequest", {
           rideId: rideId,
@@ -745,8 +759,8 @@ export const joinRide = async (req, res) => {
             photo: user.photo || null,
           },
           ride: {
-            pickup: ride.pickup,
-            drop: ride.drop,
+            pickup: pickup || ride.pickup, // Use joiner's pickup or fallback (though fallback is technically wrong for joiner, better than nothing)
+            drop: drop || ride.drop, // Include passenger's proposed drop or default to ride's drop
             currentPassengerCount: ride.currentPassengerCount,
             maxPassengers: ride.maxPassengers,
           }
@@ -772,7 +786,7 @@ export const joinRide = async (req, res) => {
 // Approve passenger join request (rider only)
 export const approvePassengerJoinRequest = async (req, res) => {
   const { rideId } = req.params;
-  const { passengerId } = req.body;
+  const { passengerId, drop } = req.body;
   const riderId = req.user.id;
 
   if (!rideId || !passengerId) {
@@ -821,6 +835,7 @@ export const approvePassengerJoinRequest = async (req, res) => {
       status: ride.status === "ARRIVED" ? "ONBOARD" : "WAITING",
       isOriginalBooker: false,
       joinedAt: new Date(),
+      drop: drop || ride.drop, // Store the specific drop-off location
     });
 
     ride.currentPassengerCount = ride.passengers.length;
@@ -833,9 +848,9 @@ export const approvePassengerJoinRequest = async (req, res) => {
       const updatedRide = await Ride.findById(rideId)
         .populate("customer", "firstName lastName phone")
         .populate("rider", "firstName lastName phone vehicleType");
-      
+
       req.io.to(`ride_${rideId}`).emit("passengerUpdate", updatedRide);
-      
+
       // Notify the passenger that they were approved
       const passengerSocket = [...req.io.sockets.sockets.values()].find(
         socket => socket.user?.id === passengerId
@@ -953,9 +968,9 @@ export const updatePassengerStatus = async (req, res) => {
       const updatedRide = await Ride.findById(rideId)
         .populate("customer", "firstName lastName phone")
         .populate("rider", "firstName lastName phone vehicleType");
-      
+
       req.io.to(`ride_${rideId}`).emit("passengerUpdate", updatedRide);
-      
+
       // Notify the specific passenger
       const passengerSocket = [...req.io.sockets.sockets.values()].find(
         socket => socket.user?.id === passengerId
@@ -1029,9 +1044,9 @@ export const removePassenger = async (req, res) => {
       const updatedRide = await Ride.findById(rideId)
         .populate("customer", "firstName lastName phone")
         .populate("rider", "firstName lastName phone vehicleType");
-      
+
       req.io.to(`ride_${rideId}`).emit("passengerUpdate", updatedRide);
-      
+
       // Notify the removed passenger
       const passengerSocket = [...req.io.sockets.sockets.values()].find(
         socket => socket.user?.id === passengerId
@@ -1070,9 +1085,9 @@ export const getAvailableRidesForJoining = async (req, res) => {
       currentPassengerCount: { $lt: 6 },
       "passengers.userId": { $ne: userId }
     })
-    .populate("customer", "firstName lastName phone")
-    .populate("rider", "firstName lastName phone vehicleType")
-    .sort({ createdAt: -1 });
+      .populate("customer", "firstName lastName phone")
+      .populate("rider", "firstName lastName phone vehicleType")
+      .sort({ createdAt: -1 });
 
     console.log(`🔍 Found ${availableRides.length} available rides for user ${userId} to join`);
 
@@ -1120,7 +1135,7 @@ export const toggleAcceptingPassengers = async (req, res) => {
       const updatedRide = await Ride.findById(rideId)
         .populate("customer", "firstName lastName phone")
         .populate("rider", "firstName lastName phone vehicleType");
-      
+
       req.io.to(`ride_${rideId}`).emit("passengerUpdate", updatedRide);
     }
 
@@ -1170,7 +1185,7 @@ export const requestEarlyStop = async (req, res) => {
     // Check if user is authorized (must be customer or rider)
     const isCustomer = ride.customer._id.toString() === userId;
     const isRider = ride.rider && ride.rider._id.toString() === userId;
-    
+
     if (!isCustomer && !isRider) {
       throw new BadRequestError("You are not authorized to request early stop for this ride");
     }
@@ -1215,7 +1230,7 @@ export const requestEarlyStop = async (req, res) => {
 
     // Mark ride as completed
     ride.status = "COMPLETED";
-    
+
     // Update trip logs
     if (!ride.tripLogs) {
       ride.tripLogs = {};
@@ -1225,10 +1240,12 @@ export const requestEarlyStop = async (req, res) => {
     ride.finalDistance = actualDistanceTraveled;
 
     // Update all passengers to DROPPED
+    const newlyDroppedPassengers = new Set();
     if (ride.passengers && ride.passengers.length > 0) {
       ride.passengers.forEach(passenger => {
         if (passenger.status === "ONBOARD" || passenger.status === "WAITING") {
           passenger.status = "DROPPED";
+          newlyDroppedPassengers.add(passenger.userId.toString());
         }
       });
     }
@@ -1258,7 +1275,7 @@ export const requestEarlyStop = async (req, res) => {
     // Broadcast ride completion to all parties
     if (req.io) {
       console.log(`📢 Broadcasting early stop completion for ride ${rideId}`);
-      
+
       req.io.to(`ride_${rideId}`).emit("rideUpdate", ride);
       req.io.to(`ride_${rideId}`).emit("rideCompleted", ride);
       req.io.to(`ride_${rideId}`).emit("earlyStopCompleted", {
@@ -1269,16 +1286,21 @@ export const requestEarlyStop = async (req, res) => {
 
       // Notify each passenger individually
       ride.passengers.forEach(passenger => {
-        const passengerSocket = [...req.io.sockets.sockets.values()].find(
-          socket => socket.user?.id === passenger.userId.toString()
-        );
-        if (passengerSocket) {
-          passengerSocket.emit("yourStatusUpdated", {
-            status: "DROPPED",
-            ride: ride,
-            earlyStop: true,
-          });
-          console.log(`👤 Notified passenger ${passenger.firstName} of early stop completion`);
+        const passIdStr = passenger.userId.toString();
+
+        // Only notify if they were newly dropped in this call
+        if (newlyDroppedPassengers.has(passIdStr)) {
+          const passengerSocket = [...req.io.sockets.sockets.values()].find(
+            socket => socket.user?.id === passIdStr
+          );
+          if (passengerSocket) {
+            passengerSocket.emit("yourStatusUpdated", {
+              status: "DROPPED",
+              ride: ride,
+              earlyStop: true,
+            });
+            console.log(`👤 Notified passenger ${passenger.firstName} of early stop completion`);
+          }
         }
       });
 
@@ -1334,7 +1356,7 @@ export const respondToEarlyStopRequest = async (req, res) => {
     if (action === 'confirm') {
       // Use the provided location or rider's current location
       const stopLocation = location || req.body.riderLocation;
-      
+
       if (!stopLocation || !stopLocation.latitude || !stopLocation.longitude) {
         throw new BadRequestError("Location is required to confirm early stop");
       }
@@ -1373,10 +1395,12 @@ export const respondToEarlyStopRequest = async (req, res) => {
       ride.tripLogs.endTime = new Date();
       ride.finalDistance = actualDistanceTraveled;
 
+      const newlyDroppedPassengers = new Set();
       if (ride.passengers) {
         ride.passengers.forEach(p => {
           if (p.status === "ONBOARD" || p.status === "WAITING") {
             p.status = "DROPPED";
+            newlyDroppedPassengers.add(p.userId.toString());
           }
         });
       }
@@ -1387,6 +1411,23 @@ export const respondToEarlyStopRequest = async (req, res) => {
       if (req.io) {
         req.io.to(`ride_${rideId}`).emit("rideCompleted", ride);
         req.io.to(`ride_${rideId}`).emit("earlyStopConfirmed", { ride, earlyStop: ride.earlyStop });
+
+        // Notify passengers
+        ride.passengers.forEach(p => {
+          const passIdStr = p.userId.toString();
+          if (newlyDroppedPassengers.has(passIdStr)) {
+            const passengerSocket = [...req.io.sockets.sockets.values()].find(
+              socket => socket.user?.id === passIdStr
+            );
+            if (passengerSocket) {
+              passengerSocket.emit("yourStatusUpdated", {
+                status: "DROPPED",
+                ride: ride,
+                earlyStop: true,
+              });
+            }
+          }
+        });
       }
 
       res.status(StatusCodes.OK).json({
@@ -1437,9 +1478,9 @@ export const createRide = async (req, res) => {
       drop.latitude,
       drop.longitude
     );
-    
+
     console.log(`🛣️ Distance calculated: ${distance.toFixed(2)} km`);
-    
+
     // Calculate fare using dynamic fare configuration from database
     let fare = 0;
     let fareBreakdown = null;
@@ -1457,7 +1498,7 @@ export const createRide = async (req, res) => {
 
     // Generate OTP
     const otp = generateOTP(); // Fixed: Use correct function name
-    
+
     console.log(`🔑 Creating ride with OTP: ${otp}`);
 
     // Get customer info for passengers array
@@ -1513,39 +1554,39 @@ export const createRide = async (req, res) => {
     // Broadcast new ride to ALL on-duty riders
     if (req.io) {
       console.log(`🚨 Broadcasting new ride ${ride._id} to all on-duty riders`);
-      
+
       // Get count of on-duty riders
       const onDutyRoom = req.io.sockets.adapter.rooms.get('onDuty');
       const onDutyCount = onDutyRoom ? onDutyRoom.size : 0;
       console.log(`👥 Currently ${onDutyCount} riders on duty`);
-      
+
       // Emit the new ride request to all on-duty riders
       req.io.to("onDuty").emit("newRideRequest", populatedRide);
       console.log(`📢 Emitted 'newRideRequest' event for ride ${ride._id}`);
-      
+
       // Also emit updated list of all searching rides
-      const allSearchingRides = await Ride.find({ 
-        status: "SEARCHING_FOR_RIDER" 
+      const allSearchingRides = await Ride.find({
+        status: "SEARCHING_FOR_RIDER"
       }).populate("customer", "firstName lastName phone");
-      
+
       console.log(`📋 Sending updated list of ${allSearchingRides.length} searching rides`);
       req.io.to("onDuty").emit("allSearchingRides", allSearchingRides);
-      
+
       // Log the IDs of all searching rides for debugging
       if (allSearchingRides.length > 0) {
         const rideIds = allSearchingRides.map(r => r._id.toString());
         console.log(`📝 Current searching ride IDs: ${rideIds.join(', ')}`);
       }
-      
+
       // Direct broadcast to each on-duty rider individually as a fallback
       const sockets = await req.io.fetchSockets();
-      const riderSockets = sockets.filter(socket => 
-        socket.user?.role === 'rider' && 
+      const riderSockets = sockets.filter(socket =>
+        socket.user?.role === 'rider' &&
         socket.rooms.has('onDuty')
       );
-      
+
       console.log(`🔄 Direct broadcasting to ${riderSockets.length} rider sockets`);
-      
+
       riderSockets.forEach(socket => {
         socket.emit("newRideRequest", populatedRide);
         socket.emit("allSearchingRides", allSearchingRides);
