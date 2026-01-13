@@ -60,7 +60,7 @@ const adminSchema = new Schema(
 );
 
 // Hash password before saving
-adminSchema.pre('save', async function() {
+adminSchema.pre('save', async function () {
   if (this.isModified('password')) {
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);
@@ -68,7 +68,7 @@ adminSchema.pre('save', async function() {
 });
 
 // Compare password method
-adminSchema.methods.comparePassword = async function(candidatePassword) {
+adminSchema.methods.comparePassword = async function (candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
@@ -82,24 +82,24 @@ adminSchema.methods.createAccessToken = function () {
       adminRole: this.role, // Include admin role for authorization
       isAdmin: true
     },
-    process.env.ACCESS_TOKEN_SECRET,
-    { expiresIn: process.env.ACCESS_TOKEN_EXPIRY }
+    process.env.ACCESS_TOKEN_SECRET || process.env.JWT_SECRET || 'pedismart_fallback_secret',
+    { expiresIn: process.env.ACCESS_TOKEN_EXPIRY || '1d' }
   );
 };
 
 // Create refresh token
 adminSchema.methods.createRefreshToken = function () {
   return jwt.sign(
-    { 
-      id: this._id, 
-      email: this.email, 
+    {
+      id: this._id,
+      email: this.email,
       role: this.role,
       adminRole: this.role,
       isAdmin: true
     },
-    process.env.REFRESH_TOKEN_SECRET,
+    process.env.REFRESH_TOKEN_SECRET || process.env.JWT_SECRET || 'pedismart_fallback_secret',
     {
-      expiresIn: process.env.REFRESH_TOKEN_EXPIRY,
+      expiresIn: process.env.REFRESH_TOKEN_EXPIRY || '7d',
     }
   );
 };

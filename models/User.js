@@ -128,7 +128,7 @@ const userSchema = new Schema(
 userSchema.index({ phone: 1, role: 1 }, { unique: true, sparse: true });
 
 // Hash password before saving
-userSchema.pre('save', async function() {
+userSchema.pre('save', async function () {
   if (this.isModified('password')) {
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);
@@ -136,7 +136,7 @@ userSchema.pre('save', async function() {
 });
 
 // Compare password method
-userSchema.methods.comparePassword = async function(candidatePassword) {
+userSchema.methods.comparePassword = async function (candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
@@ -147,17 +147,17 @@ userSchema.methods.createAccessToken = function () {
       email: this.email,
       role: this.role,
     },
-    process.env.ACCESS_TOKEN_SECRET,
-    { expiresIn: process.env.ACCESS_TOKEN_EXPIRY }
+    process.env.ACCESS_TOKEN_SECRET || process.env.JWT_SECRET || 'pedismart_fallback_secret',
+    { expiresIn: process.env.ACCESS_TOKEN_EXPIRY || '1d' }
   );
 };
 
 userSchema.methods.createRefreshToken = function () {
   return jwt.sign(
     { id: this._id, email: this.email, role: this.role },
-    process.env.REFRESH_TOKEN_SECRET,
+    process.env.REFRESH_TOKEN_SECRET || process.env.JWT_SECRET || 'pedismart_fallback_secret',
     {
-      expiresIn: process.env.REFRESH_TOKEN_EXPIRY,
+      expiresIn: process.env.REFRESH_TOKEN_EXPIRY || '7d',
     }
   );
 };
