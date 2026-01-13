@@ -937,6 +937,11 @@ export const getPopularRoutes = async (req, res) => {
   } catch (error) {
     console.error('Error fetching popular routes:', error);
     res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
+      message: 'Failed to fetch popular routes',
+      error: error.message
+    });
+  }
+};
 
 // Get accuracy metrics (Distance & Time)
 export const getAccuracyMetrics = async (req, res) => {
