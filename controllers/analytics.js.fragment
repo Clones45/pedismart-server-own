@@ -1,0 +1,126 @@
+
+// Get accuracy metrics (Distance & Time)
+export const getAccuracyMetrics = async (req, res) => {
+  try {
+    const { timeFilter = 'all' } = req.query;
+    const { startDate, endDate } = getDateRange(timeFilter);
+
+    console.log(`🎯 Calculating accuracy metrics for period: ${startDate.toISOString()} - ${endDate.toISOString()}`);
+
+    const accuracyStats = await Ride.aggregate([
+      {
+        $match: {
+          status: 'COMPLETED',
+          createdAt: { $gte: startDate, $lte: endDate },
+          // Only include rides that have route logs
+          'routeLogs': { $exists: true }
+        }
+      },
+      {
+        $addFields: {
+          // Calculate actual duration in seconds
+          actualDuration: {
+            $divide: [
+              { $subtract: [{ $ifNull: ['$tripLogs.dropoffTime', '$tripLogs.endTime'] }, '$tripLogs.startTime'] },
+              1000
+            ]
+          },
+          // Calculate distance deviation
+          distanceDiff: {
+            $abs: { $subtract: ['$routeLogs.routeDistance', '$routeLogs.estimatedDistance'] }
+          },
+          // Calculate time deviation (if ETA exists)
+          timeDiff: {
+            $cond: {
+              if: { $and: ['$routeLogs.estimatedDuration', { $gt: ['$routeLogs.estimatedDuration', 0] }] },
+              then: {
+                $abs: {
+                  $subtract: [
+                    { $divide: [{ $subtract: [{ $ifNull: ['$tripLogs.dropoffTime', '$tripLogs.endTime'] }, '$tripLogs.startTime'] }, 1000] },
+                    '$routeLogs.estimatedDuration'
+                  ]
+                }
+              },
+              else: null
+            }
+          }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalRides: { $sum: 1 },
+          // Count rides with valid data for each metric
+          ridesWithDistanceData: {
+            $sum: { 
+              $cond: [{ $and: ['$routeLogs.routeDistance', '$routeLogs.estimatedDistance'] }, 1, 0] 
+            }
+          },
+          ridesWithTimeData: {
+            $sum: { 
+              $cond: [{ $and: ['$routeLogs.estimatedDuration', { $ne: ['$timeDiff', null] }] }, 1, 0] 
+            }
+          },
+          // Accumulate raw errors
+          totalDistanceDiff: { $sum: { $ifNull: ['$distanceDiff', 0] } },
+          totalTimeDiff: { $sum: { $ifNull: ['$timeDiff', 0] } },
+          // Accumulate totals for averaging
+          totalEstimatedDistance: { $sum: { $ifNull: ['$routeLogs.estimatedDistance', 0] } },
+          totalEstimatedDuration: { $sum: { $ifNull: ['$routeLogs.estimatedDuration', 0] } }
+        }
+      }
+    ]);
+
+    let metrics = {
+      period: { start: startDate, end: endDate },
+      totalAnalyzedRides: 0,
+      distanceAccuracy: {
+        accuracyPercentage: 0,
+        averageDeviationKm: 0,
+        analyzedCount: 0
+      },
+      timeAccuracy: {
+        accuracyPercentage: 0,
+        averageDeviationMinutes: 0,
+        analyzedCount: 0
+      }
+    };
+
+    if (accuracyStats.length > 0) {
+      const stats = accuracyStats[0];
+      metrics.totalAnalyzedRides = stats.totalRides;
+
+      // Calculate Distance Accuracy
+      if (stats.ridesWithDistanceData > 0 && stats.totalEstimatedDistance > 0) {
+        // Accuracy = 100 - (Total Error / Total Estimated * 100)
+        const errorRate = (stats.totalDistanceDiff / stats.totalEstimatedDistance) * 100;
+        metrics.distanceAccuracy = {
+          accuracyPercentage: Math.max(0, 100 - errorRate).toFixed(2),
+          averageDeviationKm: (stats.totalDistanceDiff / stats.ridesWithDistanceData).toFixed(2),
+          analyzedCount: stats.ridesWithDistanceData
+        };
+      }
+
+      // Calculate Time Accuracy
+      if (stats.ridesWithTimeData > 0 && stats.totalEstimatedDuration > 0) {
+        const errorRate = (stats.totalTimeDiff / stats.totalEstimatedDuration) * 100;
+        metrics.timeAccuracy = {
+          accuracyPercentage: Math.max(0, 100 - errorRate).toFixed(2),
+          averageDeviationMinutes: (stats.totalTimeDiff / stats.ridesWithTimeData / 60).toFixed(1), // Convert seconds to minutes
+          analyzedCount: stats.ridesWithTimeData
+        };
+      }
+    }
+
+    res.status(StatusCodes.OK).json({
+      metrics,
+      note: "Time accuracy only available for rides created with app v1.0.3+"
+    });
+  } catch (error) {
+    console.error('Error calculating accuracy metrics:', error);
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
+      message: 'Failed to calculate accuracy metrics',
+      error: error.message
+    });
+  }
+};

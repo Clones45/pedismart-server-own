@@ -1691,6 +1691,7 @@ export const createRide = async (req, res) => {
       // ============================================
       routeLogs: {
         estimatedDistance: distance, // Distance from routing API/calculation
+        estimatedDuration: req.body.estimatedDuration || null, // Duration from routing API (in seconds)
         actualDistance: null, // Will be calculated on completion
         routeDistance: null, // Will be calculated from GPS checkpoints
         deviationPercentage: null,

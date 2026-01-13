@@ -259,6 +259,11 @@ const rideSchema = new Schema(
         type: Number,
         default: null,
       },
+      // Estimated duration from routing API (in seconds)
+      estimatedDuration: {
+        type: Number,
+        default: null,
+      },
       // Deviation percentage ((routeDistance - estimatedDistance) / estimatedDistance * 100)
       deviationPercentage: {
         type: Number,
