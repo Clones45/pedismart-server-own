@@ -30,7 +30,7 @@ import 'express-async-errors';
 import EventEmitter from 'events';
 import express from 'express';
 import http from 'http';
-import { Server as socketIo } from 'socket.io'; 
+import { Server as socketIo } from 'socket.io';
 import connectDB from './config/connect.js';
 import notFoundMiddleware from './middleware/not-found.js';
 import errorHandlerMiddleware from './middleware/error-handler.js';
@@ -69,9 +69,26 @@ app.use(express.json());
 
 // CORS middleware
 app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  const origin = req.headers.origin;
+  const allowedOrigins = [
+    'http://localhost:3000',
+    'http://localhost:5173',
+  ];
+
+  // Dynamic origin handling
+  if (origin) {
+    if (allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+    }
+  } else {
+    // For mobile apps/Postman (no origin header usually)
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
   }
@@ -82,10 +99,10 @@ app.use((req, res, next) => {
 app.get('/debug/status', async (req, res) => {
   const onDutyRidersCount = req.io.sockets.adapter.rooms.get('onDuty')?.size || 0;
   const connectedSockets = req.io.sockets.sockets.size;
-  
+
   // Get all connected sockets
   const sockets = await req.io.fetchSockets();
-  
+
   // Get socket details
   const socketDetails = sockets.map(socket => ({
     id: socket.id,
@@ -94,7 +111,7 @@ app.get('/debug/status', async (req, res) => {
     rooms: Array.from(socket.rooms),
     isOnDuty: socket.rooms.has('onDuty')
   }));
-  
+
   res.json({
     status: 'online',
     timestamp: new Date().toISOString(),
@@ -111,7 +128,7 @@ app.get('/debug/status', async (req, res) => {
 app.get('/debug/rooms', (req, res) => {
   const rooms = req.io.sockets.adapter.rooms;
   const roomData = {};
-  
+
   // Convert Map to object for JSON response
   for (const [roomName, roomSet] of rooms.entries()) {
     // Skip socket IDs (they're also in rooms)
@@ -122,7 +139,7 @@ app.get('/debug/rooms', (req, res) => {
       };
     }
   }
-  
+
   res.json({
     timestamp: new Date().toISOString(),
     rooms: roomData
@@ -134,14 +151,14 @@ app.get('/debug/rides', async (req, res) => {
   try {
     // Import Ride model
     const Ride = (await import('./models/Ride.js')).default;
-    
+
     // Get all searching rides
     const searchingRides = await Ride.find({ status: 'SEARCHING_FOR_RIDER' })
       .populate('customer', 'firstName lastName phone');
-    
+
     // Get all rides
     const allRides = await Ride.find({}).sort({ createdAt: -1 }).limit(10);
-    
+
     res.json({
       timestamp: new Date().toISOString(),
       searchingRidesCount: searchingRides.length,
@@ -188,7 +205,7 @@ server.on('connection', (socket) => {
 // ============================================
 
 // Enhanced Socket.IO configuration for better reliability on Render
-const io = new socketIo(server, { 
+const io = new socketIo(server, {
   cors: { origin: "*" },
   // Increase timeouts to handle Render's free tier spin-down
   pingTimeout: 60000, // 60 seconds (default is 20 seconds)
@@ -239,12 +256,12 @@ app.use(errorHandlerMiddleware);
 const start = async () => {
   try {
     await connectDB(process.env.MONGO_URI);
-    
+
     // Initialize scheduled jobs after database connection
     console.log('🔧 Initializing scheduled jobs...');
     initAutoApprovalJob(60); // Run every 60 minutes
     initAutoCancelRideJob(15); // Run every 15 minutes - auto-cancel stale rides
-    
+
     const PORT = process.env.PORT || 3000;
     server.listen(PORT, "0.0.0.0", () =>
       console.log(`HTTP server is running on port http://localhost:${PORT}`)
