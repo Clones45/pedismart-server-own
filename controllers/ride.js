@@ -839,7 +839,8 @@ export const approvePassengerJoinRequest = async (req, res) => {
       pickup: req.body.pickup || null, // Store the specific pickup location
     });
 
-    ride.currentPassengerCount = ride.passengers.length;
+    // Recalculate active passenger count
+    ride.currentPassengerCount = ride.passengers.filter(p => p.status === "WAITING" || p.status === "ONBOARD").length;
     await ride.save();
 
     console.log(`✅ Rider approved: Passenger ${user.firstName} ${user.lastName} joined ride ${rideId}`);
@@ -960,6 +961,9 @@ export const updatePassengerStatus = async (req, res) => {
       passenger.boardedAt = new Date();
     }
 
+    // Recalculate active passenger count (WAITING or ONBOARD)
+    ride.currentPassengerCount = ride.passengers.filter(p => p.status === "WAITING" || p.status === "ONBOARD").length;
+
     await ride.save();
 
     console.log(`👤 Passenger ${passenger.firstName} ${passenger.lastName} status updated to ${status} in ride ${rideId}`);
@@ -1035,7 +1039,8 @@ export const removePassenger = async (req, res) => {
 
     // Remove passenger
     ride.passengers.splice(passengerIndex, 1);
-    ride.currentPassengerCount = ride.passengers.length;
+    // Recalculate active passenger count
+    ride.currentPassengerCount = ride.passengers.filter(p => p.status === "WAITING" || p.status === "ONBOARD").length;
     await ride.save();
 
     console.log(`👋 Passenger ${passenger.firstName} ${passenger.lastName} removed from ride ${rideId}. Remaining passengers: ${ride.currentPassengerCount}`);
@@ -1227,6 +1232,10 @@ export const requestEarlyStop = async (req, res) => {
 
         await ride.save();
 
+        // Recalculate active passenger count
+        ride.currentPassengerCount = ride.passengers.filter(p => p.status === "WAITING" || p.status === "ONBOARD").length;
+        await ride.save();
+
         console.log(`👤 Passenger ${userId} requested EARLY STOP. Status updated to DROPPED.`);
 
         // Notify socket
@@ -1310,6 +1319,10 @@ export const requestEarlyStop = async (req, res) => {
         reason: reason || null,
       };
 
+      await ride.save();
+
+      // Recalculate active passenger count (Main customer dropped)
+      ride.currentPassengerCount = ride.passengers.filter(p => p.status === "WAITING" || p.status === "ONBOARD").length;
       await ride.save();
       console.log(`👤 Main Customer ${userId} requested EARLY STOP. Ride continues for ${otherActivePassengers.length} others.`);
 
@@ -1403,6 +1416,9 @@ export const requestEarlyStop = async (req, res) => {
         }
       });
     }
+
+    // Recalculate active passenger count
+    ride.currentPassengerCount = ride.passengers.filter(p => p.status === "WAITING" || p.status === "ONBOARD").length;
 
     await ride.save();
 
@@ -1558,6 +1574,10 @@ export const respondToEarlyStopRequest = async (req, res) => {
         });
       }
 
+      await ride.save();
+
+      // Recalculate active passenger count
+      ride.currentPassengerCount = ride.passengers.filter(p => p.status === "WAITING" || p.status === "ONBOARD").length;
       await ride.save();
 
       // Broadcast completion
