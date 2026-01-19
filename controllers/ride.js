@@ -1768,6 +1768,42 @@ export const createRide = async (req, res) => {
       });
     }
 
+    // ============================================
+    // TIMEOUT LOGIC: Auto-cancel if no driver accepts within 60 seconds
+    // ============================================
+    setTimeout(async () => {
+      try {
+        const currentRide = await Ride.findById(ride._id);
+
+        if (currentRide && currentRide.status === "SEARCHING_FOR_RIDER") {
+          console.log(`⏱️ Ride ${ride._id} timed out after 60s - cancelling...`);
+
+          currentRide.status = "TIMEOUT";
+          currentRide.cancellationReason = "No driver accepted within 60 seconds";
+          currentRide.cancelledBy = "system"; // System auto-cancellation
+          currentRide.cancelledAt = new Date();
+          await currentRide.save();
+
+          // Broadcast cancellation to the ride room (triggers client redirect)
+          if (req.io) {
+            req.io.to(`ride_${ride._id}`).emit("rideCanceled", {
+              rideId: ride._id,
+              message: "No driver found nearby. Please try again.",
+              cancelledBy: "system"
+            });
+            console.log(`📢 Emitted rideCanceled (timeout) for ride ${ride._id}`);
+
+            // Remove from on-duty riders
+            req.io.to("onDuty").emit("rideOfferCanceled", ride._id);
+            console.log(`🚫 Emitted rideOfferCanceled (timeout) for ride ${ride._id}`);
+          }
+        }
+      } catch (timeoutError) {
+        console.error(`❌ Error in ride timeout handler for ${ride._id}:`, timeoutError);
+      }
+    }, 60000); // 60 seconds
+    // ============================================
+
     res
       .status(StatusCodes.CREATED)
       .json({ message: "Ride created successfully", ride: populatedRide });
