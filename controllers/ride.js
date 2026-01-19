@@ -1778,24 +1778,38 @@ export const createRide = async (req, res) => {
         if (currentRide && currentRide.status === "SEARCHING_FOR_RIDER") {
           console.log(`⏱️ Ride ${ride._id} timed out after 60s - cancelling...`);
 
-          currentRide.status = "TIMEOUT";
+          // Use CANCELLED status so client handles it properly (visual feedback) even if event is missed
+          currentRide.status = "CANCELLED";
           currentRide.cancellationReason = "No driver accepted within 60 seconds";
           currentRide.cancelledBy = "system"; // System auto-cancellation
           currentRide.cancelledAt = new Date();
           await currentRide.save();
 
-          // Broadcast cancellation to the ride room (triggers client redirect)
           if (req.io) {
-            req.io.to(`ride_${ride._id}`).emit("rideCanceled", {
+            const cancelPayload = {
               rideId: ride._id,
               message: "No driver found nearby. Please try again.",
-              cancelledBy: "system"
-            });
-            console.log(`📢 Emitted rideCanceled (timeout) for ride ${ride._id}`);
+              cancelledBy: "system",
+              ride: currentRide // Include full ride object
+            };
 
-            // Remove from on-duty riders
+            // 1. Broadcast to ride room
+            req.io.to(`ride_${ride._id}`).emit("rideCanceled", cancelPayload);
+            console.log(`📢 Emitted rideCanceled (timeout) to room ride_${ride._id}`);
+
+            // 2. Direct emit to customer (Reliability Check)
+            const customerSocket = [...req.io.sockets.sockets.values()].find(
+              socket => socket.user?.id === ride.customer.toString()
+            );
+            if (customerSocket) {
+              customerSocket.emit("rideCanceled", cancelPayload);
+              console.log(`👤 Direct emit rideCanceled to customer ${ride.customer}`);
+            }
+
+            // 3. Remove from on-duty riders
             req.io.to("onDuty").emit("rideOfferCanceled", ride._id);
-            console.log(`🚫 Emitted rideOfferCanceled (timeout) for ride ${ride._id}`);
+            req.io.to("onDuty").emit("rideCanceled", cancelPayload);
+            console.log(`🚫 Emitted rideOfferCanceled/rideCanceled to onDuty for ride ${ride._id}`);
           }
         }
       } catch (timeoutError) {
