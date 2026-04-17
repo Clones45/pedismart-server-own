@@ -799,8 +799,8 @@ export const joinRide = async (req, res) => {
             photo: user.photo || null,
           },
           ride: {
-            pickup: pickup || ride.pickup, // Use joiner's pickup or fallback (though fallback is technically wrong for joiner, better than nothing)
-            drop: drop || ride.drop, // Include passenger's proposed drop or default to ride's drop
+            joinerPickup: pickup || null,  // Joiner's own pickup location
+            joinerDrop: drop || null,      // Joiner's own drop-off location
             currentPassengerCount: ride.currentPassengerCount,
             maxPassengers: ride.maxPassengers,
           }
