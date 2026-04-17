@@ -57,6 +57,30 @@ const filterRidesByDistance = (rides, riderCoords) => {
 };
 // ============================================
 
+// ============================================
+// Helper: Calculate total distance (km) from a GPS breadcrumb path
+// Uses Haversine formula between consecutive points.
+// ============================================
+const calculatePathDistance = (gpsPath) => {
+  if (!gpsPath || gpsPath.length < 2) return 0;
+  let total = 0;
+  for (let i = 1; i < gpsPath.length; i++) {
+    const prev = gpsPath[i - 1];
+    const curr = gpsPath[i];
+    const R = 6371; // km
+    const dLat = ((curr.latitude - prev.latitude) * Math.PI) / 180;
+    const dLon = ((curr.longitude - prev.longitude) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos((prev.latitude * Math.PI) / 180) *
+      Math.cos((curr.latitude * Math.PI) / 180) *
+      Math.sin(dLon / 2) ** 2;
+    total += R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+  return Math.round(total * 1000) / 1000; // round to 3 decimals
+};
+// ============================================
+
 const handleSocketConnection = (io) => {
   io.use(async (socket, next) => {
     try {
@@ -313,6 +337,40 @@ const handleSocketConnection = (io) => {
           socket.emit("allSearchingRides", []);
         }
       });
+
+      // ============================================
+      // GPS BREADCRUMBS: Record a GPS point during ARRIVED phase
+      // Rider app fires this every ~10s while passenger is onboard.
+      // ============================================
+      socket.on("recordGpsPoint", async (data) => {
+        try {
+          const { rideId, latitude, longitude, timestamp, speed } = data;
+          if (!rideId || latitude == null || longitude == null) return;
+
+          // Only append when passenger is onboard (ARRIVED status)
+          const ride = await Ride.findById(rideId).select("status gpsPath");
+          if (!ride || ride.status !== "ARRIVED") return;
+
+          // Cap at 500 points (~83 min at 10s intervals)
+          if (ride.gpsPath.length >= 500) return;
+
+          await Ride.findByIdAndUpdate(rideId, {
+            $push: {
+              gpsPath: {
+                latitude,
+                longitude,
+                timestamp: timestamp ? new Date(timestamp) : new Date(),
+                speed: speed || 0,
+              }
+            }
+          });
+
+          console.log(`📍 GPS breadcrumb recorded for ride ${rideId}: [${latitude.toFixed(5)}, ${longitude.toFixed(5)}] (total: ${ride.gpsPath.length + 1})`);
+        } catch (err) {
+          console.error(`⚠️ Failed to record GPS point:`, err.message);
+        }
+      });
+      // ============================================
     }
 
     if (user.role === "customer") {

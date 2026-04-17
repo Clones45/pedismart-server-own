@@ -156,13 +156,15 @@ export const acceptRide = async (req, res) => {
         console.log(`Customer socket not found for customer ${ride.customer}`);
       }
 
-      // Send ride data with OTP to the rider who accepted
+      // Send ride data WITHOUT OTP to the rider who accepted
       const riderSocket = [...req.io.sockets.sockets.values()].find(
         socket => socket.user?.id === riderId
       );
       if (riderSocket) {
         console.log(`Found rider socket, notifying rider ${riderId}`);
-        riderSocket.emit("rideAccepted", ride);
+        const rideToRider = ride.toObject();
+        delete rideToRider.otp;
+        riderSocket.emit("rideAccepted", rideToRider);
       } else {
         console.log(`Rider socket not found for rider ${riderId}`);
       }
@@ -191,6 +193,12 @@ export const updateRideStatus = async (req, res) => {
     throw new BadRequestError("Ride ID and status are required");
   }
 
+  // OTP is required when transitioning to ARRIVED (pickup confirmation)
+  const { otp } = req.body;
+  if (status === "ARRIVED" && !otp) {
+    throw new BadRequestError("OTP is required to confirm pickup");
+  }
+
   try {
     let ride = await Ride.findById(rideId).populate("customer", "firstName lastName phone").populate("rider", "firstName lastName phone vehicleType");
 
@@ -215,7 +223,15 @@ export const updateRideStatus = async (req, res) => {
 
     // Log the status change with detailed information
     console.log(`📝 Ride ${rideId} status change: ${ride.status} → ${status}`);
-    console.log(`📍 Ride details: Customer=${ride.customer._id}, Rider=${ride.rider?._id || 'None'}, OTP=${ride.otp}`);
+    
+    // Validate OTP if status is ARRIVED
+    if (status === "ARRIVED") {
+      if (ride.otp !== otp) {
+        console.log(`❌ Invalid OTP attempt for ride ${rideId}: received ${otp}, expected ${ride.otp}`);
+        throw new BadRequestError("Invalid OTP. Please ask the passenger for the correct code.");
+      }
+      console.log(`✅ OTP validated successfully for ride ${rideId}`);
+    }
 
     // Update the status
     ride.status = status;
@@ -263,8 +279,29 @@ export const updateRideStatus = async (req, res) => {
         );
         ride.routeLogs.actualDistance = actualDistance;
 
-        // 2. Route Distance: Calculate from GPS checkpoints (driver's actual path)
-        const routeDistance = await CheckpointSnapshot.calculateTotalDistance(rideId);
+        // 2. Route Distance: Use GPS breadcrumbs if available (more accurate than 2-min checkpoints)
+        let routeDistance = 0;
+        if (ride.gpsPath && ride.gpsPath.length >= 2) {
+          // Calculate from dense GPS breadcrumbs recorded during ARRIVED phase
+          const R = 6371;
+          for (let i = 1; i < ride.gpsPath.length; i++) {
+            const prev = ride.gpsPath[i - 1];
+            const curr = ride.gpsPath[i];
+            const dLat = ((curr.latitude - prev.latitude) * Math.PI) / 180;
+            const dLon = ((curr.longitude - prev.longitude) * Math.PI) / 180;
+            const a = Math.sin(dLat / 2) ** 2 +
+              Math.cos((prev.latitude * Math.PI) / 180) *
+              Math.cos((curr.latitude * Math.PI) / 180) *
+              Math.sin(dLon / 2) ** 2;
+            routeDistance += R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+          }
+          routeDistance = Math.round(routeDistance * 1000) / 1000;
+          console.log(`📍 Route distance from ${ride.gpsPath.length} GPS breadcrumbs: ${routeDistance.toFixed(2)}km`);
+        } else {
+          // Fallback: sparse checkpoints (every 2 minutes)
+          routeDistance = await CheckpointSnapshot.calculateTotalDistance(rideId);
+          console.log(`📍 Route distance from checkpoint snapshots: ${routeDistance.toFixed(2)}km`);
+        }
         ride.routeLogs.routeDistance = routeDistance;
 
         // 3. Calculate deviation percentage
@@ -373,10 +410,13 @@ export const updateRideStatus = async (req, res) => {
     }
     // ============================================
 
-    // Broadcast to ride room
+    // Broadcast to ride room (WITHOUT OTP for everyone)
     if (req.io) {
       console.log(`Broadcasting ride status update: ${status} for ride ${rideId}`);
-      req.io.to(`ride_${rideId}`).emit("rideUpdate", ride);
+      
+      const rideToRoom = ride.toObject();
+      delete rideToRoom.otp;
+      req.io.to(`ride_${rideId}`).emit("rideUpdate", rideToRoom);
 
       // Broadcast passenger status updates if any passengers were auto-updated
       if (ride.passengers && ride.passengers.length > 0 && (status === "ARRIVED" || status === "COMPLETED")) {

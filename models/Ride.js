@@ -276,6 +276,25 @@ const rideSchema = new Schema(
       },
     },
     // ============================================
+
+    // ============================================
+    // GPS BREADCRUMBS (raw path recorded during ARRIVED status)
+    // Populated via the `recordGpsPoint` socket event from the rider app.
+    // Used to calculate routeLogs.routeDistance on completion.
+    // Capped at 500 points (~83 min at 10s intervals) to avoid unbounded growth.
+    // ============================================
+    gpsPath: {
+      type: [
+        {
+          latitude: { type: Number, required: true },
+          longitude: { type: Number, required: true },
+          timestamp: { type: Date, default: Date.now },
+          speed: { type: Number, default: 0 },
+        }
+      ],
+      default: [],
+    },
+    // ============================================
   },
   {
     timestamps: true,

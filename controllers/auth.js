@@ -13,7 +13,8 @@ export const testAuth = async (req, res) => {
 
 // Login with email and password
 export const login = async (req, res) => {
-  const { email, password, role } = req.body;
+  const { password, role } = req.body;
+  const email = req.body.email ? req.body.email.trim() : undefined;
 
   console.log("Login attempt:", { email, role }); // Log login attempt details
 
@@ -27,13 +28,13 @@ export const login = async (req, res) => {
 
   try {
     // Find user without role restriction first to debug
-    const anyUser = await User.findOne({ email });
+    const anyUser = await User.findOne({ email: { $regex: new RegExp(`^${email}$`, 'i') } });
     console.log("User found with this email:", anyUser ? "Yes" : "No");
     if (anyUser) {
       console.log("User role:", anyUser.role, "Requested role:", role);
     }
 
-    const user = await User.findOne({ email, role });
+    const user = await User.findOne({ email: { $regex: new RegExp(`^${email}$`, 'i') }, role });
     
     if (!user) {
       console.log("User not found with email and role combination");
@@ -155,7 +156,6 @@ export const login = async (req, res) => {
 // Register a new user
 export const register = async (req, res) => {
   const { 
-    email, 
     password, 
     role, 
     firstName, 
@@ -172,6 +172,7 @@ export const register = async (req, res) => {
     driverLicense,
     vehicleType
   } = req.body;
+  const email = req.body.email ? req.body.email.trim() : undefined;
 
   if (!email || !password) {
     throw new BadRequestError("Please provide email and password");
@@ -182,8 +183,8 @@ export const register = async (req, res) => {
   }
 
   try {
-    // Check if user already exists with same email
-    const existingUser = await User.findOne({ email });
+    // Check if user already exists with same email (case-insensitive)
+    const existingUser = await User.findOne({ email: { $regex: new RegExp(`^${email}$`, 'i') } });
     if (existingUser) {
       throw new BadRequestError("Email already in use");
     }
@@ -571,7 +572,7 @@ export const forgotPassword = async (req, res) => {
 
   try {
     // Find user by email and role
-    const user = await User.findOne({ email, role });
+    const user = await User.findOne({ email: { $regex: new RegExp(`^${email.trim()}$`, 'i') }, role });
     
     if (!user) {
       // Don't reveal if user exists or not for security
@@ -651,7 +652,7 @@ export const verifyCode = async (req, res) => {
 
   try {
     // Find user by email and role
-    const user = await User.findOne({ email, role });
+    const user = await User.findOne({ email: { $regex: new RegExp(`^${email.trim()}$`, 'i') }, role });
     
     if (!user) {
       throw new BadRequestError("Invalid verification code or user not found");
@@ -742,7 +743,7 @@ export const resetPassword = async (req, res) => {
 
   try {
     // Find user by email and role
-    const user = await User.findOne({ email, role });
+    const user = await User.findOne({ email: { $regex: new RegExp(`^${email.trim()}$`, 'i') }, role });
     
     if (!user) {
       throw new BadRequestError("Invalid verification code or user not found");
